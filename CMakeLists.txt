@@ -32,70 +32,61 @@ target_include_directories(nuked_opn2_lib PUBLIC ${nuked_opn2_SOURCE_DIR})
 # ---- Sources ------------------------------------------------------------
 set(SOURCES
     src/main.cpp
+
+    # Hardware abstraction layer (SDL2 backends)
     src/hardware/vdp.cpp
     src/hardware/sound.cpp
     src/hardware/input.cpp
+
+    # ROM access + compression (art only)
     src/assets/rom.cpp
+    src/assets/kosinski.cpp
+
+    # Hardcoded zone data (no ROM dependency)
+    src/data/ehz_data.cpp
+
+    # Game logic
     src/game/globals.cpp
     src/game/object.cpp
     src/game/sonic.cpp
+    src/game/ring.cpp
+    src/game/monitor.cpp
     src/game/level.cpp
+    src/game/sound_driver.cpp
     src/game/main_loop.cpp
 )
 
-# ---- Platform-specific executable type ---------------------------------
-if(ANDROID)
-    # Android: build a shared library (.so) loaded by the SDL2 Java glue
-    add_library(sonic2 SHARED ${SOURCES})
-elseif(IOS)
-    # iOS: build an app bundle
-    add_executable(sonic2 MACOSX_BUNDLE ${SOURCES})
-    set_target_properties(sonic2 PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/platform/ios/Info.plist
-        XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "13.0"
-        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"  # iPhone + iPad
-    )
-else()
-    add_executable(sonic2 ${SOURCES})
-endif()
-
+add_executable(sonic2 ${SOURCES})
 target_include_directories(sonic2 PRIVATE src)
 
-# ---- Link libraries -----------------------------------------------------
 if(SDL2_FOUND)
     target_link_libraries(sonic2 PRIVATE SDL2::SDL2 SDL2::SDL2main nuked_opn2_lib)
 else()
     target_link_libraries(sonic2 PRIVATE SDL2-static nuked_opn2_lib)
 endif()
 
-# ---- Windows: keep console window for error output ----------------------
+# ---- Platform-specific tweaks ------------------------------------------
 if(WIN32)
+    # Keep console window for diagnostic output
     set_target_properties(sonic2 PROPERTIES WIN32_EXECUTABLE FALSE)
 endif()
 
-# ---- macOS: set minimum deployment target and bundle metadata -----------
-if(APPLE AND NOT IOS)
+if(APPLE)
     set_target_properties(sonic2 PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "Sonic the Hedgehog 2"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.yourname.sonic2"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
-        XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET "11.0"
     )
     target_link_libraries(sonic2 PRIVATE "-framework CoreAudio" "-framework AudioToolbox")
 endif()
 
-# ---- Android: link SDL2 activity + OpenGL ES ---------------------------
-if(ANDROID)
-    find_library(ANDROID_LOG_LIB log)
-    find_library(ANDROID_LIB android)
-    find_library(GLES_LIB GLESv1_CM)
-    target_link_libraries(sonic2 PRIVATE
-        ${ANDROID_LOG_LIB} ${ANDROID_LIB} ${GLES_LIB}
-    )
+# Linux: ensure math library is linked
+if(UNIX AND NOT APPLE)
+    target_link_libraries(sonic2 PRIVATE m)
 endif()
 
-# ---- Copy ROM next to the binary if present at configure time -----------
+# ---- Copy ROM next to the binary if present at configure time ----------
 if(EXISTS ${CMAKE_SOURCE_DIR}/sonic2.md)
     configure_file(${CMAKE_SOURCE_DIR}/sonic2.md ${CMAKE_BINARY_DIR}/sonic2.md COPYONLY)
 endif()

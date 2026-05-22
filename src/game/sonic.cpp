@@ -1,8 +1,10 @@
 #include "sonic.hpp"
 #include "globals.hpp"
 #include "level.hpp"
+#include "ring.hpp"
 #include <cstdlib>
 #include <algorithm>
+#include <cmath>
 
 // ============================================================
 // Sonic physics — translated from s2disasm.
@@ -46,13 +48,11 @@ static void Sonic_Jump(Object &obj)
 // Translated from s2disasm's Sonic_Move_Air / Sonic_Gravity routines.
 static void Sonic_AirMove(Object &obj)
 {
-    // Input from global controller state (player 1)
-    // In the original: move.w (v_joypad).w, d0 ; check held bits
-    extern std::array<struct _InputState,2> g_input_state;  // set by input.cpp
+    // Input is applied in main_loop.cpp (GameContext) before sonic_update() is called.
+    // Horizontal air velocity has already been adjusted when we get here.
 
-    int16_t top   = f_water ? SONIC_TOP_SPEED_W : SONIC_TOP_SPEED;
-    int16_t accel = SONIC_AIR_ACCEL;
-    int16_t drag  = SONIC_AIR_DECEL;
+    int16_t top  = f_water ? SONIC_TOP_SPEED_W : SONIC_TOP_SPEED;
+    (void)top;
 
     // Horizontal air movement (looser control than ground)
     // btst #BTN_RIGHT, d0 / btst #BTN_LEFT, d0
@@ -213,7 +213,8 @@ void sonic_hurt(Object &obj)
     if (sd.hurtLock) return;
 
     if (f_rings > 0) {
-        // TODO: scatter rings, play hurt SFX
+        ring_scatter_all(obj.pixel_x(), obj.pixel_y(),
+                         (uint8_t)(f_rings > 16 ? 16 : f_rings));
         f_rings = 0;
     } else {
         sonic_kill(obj);

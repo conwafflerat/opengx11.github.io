@@ -27,9 +27,10 @@ struct BlockEntry {
     uint16_t tile[4];   // tl, tr, bl, br — same bitfield as NT_* flags above
 };
 
-// Chunk = 16×16 block references
+// Chunk = 8×8 block references (each block is 16×16 px → chunk is 128×128 px)
+static constexpr int CHUNK_BLOCKS = 8;
 struct Chunk {
-    uint8_t block[16][16];  // block index
+    uint8_t block[CHUNK_BLOCKS][CHUNK_BLOCKS];
 };
 
 // Floor collision map for one block (8 heights, one per pixel column)
@@ -72,9 +73,10 @@ private:
     int m_width_chunks  = 0;
     int m_height_chunks = 0;
 
-    // ROM data pointers (valid while ROM is loaded)
-    const uint8_t *m_art      = nullptr;
-    const uint8_t *m_art_end  = nullptr;
+    // ROM pointer — kept only to feed kosinski_decomp() for art.
+    // All other data comes from hardcoded arrays in src/data/.
+    const uint8_t *m_rom             = nullptr;
+    uint32_t       m_art_rom_offset  = 0;
 
     // Helpers
     const CollisionTile &col_tile_at(int wx, int wy) const;
