@@ -63,7 +63,9 @@ class M68K:
         self.stopped = False
         self.pending_irq = 0      # highest pending interrupt level (0 = none)
         self.illegal_as_nop = False
+        self.illegal_log = {}     # opcode -> hit count (when illegal_as_nop)
         self.cycles = 0
+        self.instructions = 0
 
     # ------------------------------------------------------------------ state
     def reset(self):
@@ -309,12 +311,14 @@ class M68K:
             cost = self.execute(opcode)
         except IllegalInstruction:
             if self.illegal_as_nop:
+                self.illegal_log[opcode] = self.illegal_log.get(opcode, 0) + 1
                 cost = 4
             else:
                 raise
         if cost is None:
             cost = 4
         self.cycles += cost
+        self.instructions += 1
         return cost
 
     def execute(self, opcode: int) -> int:
@@ -526,6 +530,65 @@ class M68K:
             return 12
         if (opcode & 0xFB80) == 0x4880:  # MOVEM
             return self._movem(opcode)
+        if (opcode & 0xFFC0) == 0x40C0:  # MOVE from SR
+            dst = self.decode_ea((opcode >> 3) & 7, opcode & 7, 2)
+            self.write_op(dst, self.sr & 0xFFFF)
+            return 6
+        if (opcode & 0xFFC0) == 0x42C0:  # MOVE from CCR
+            dst = self.decode_ea((opcode >> 3) & 7, opcode & 7, 2)
+            self.write_op(dst, self.sr & 0xFF)
+            return 6
+        if (opcode & 0xFFC0) == 0x44C0:  # MOVE to CCR
+            src = self.decode_ea((opcode >> 3) & 7, opcode & 7, 2)
+            self.sr = (self.sr & 0xFF00) | (self.read_op(src) & 0xFF)
+            return 12
+        if (opcode & 0xFFC0) == 0x46C0:  # MOVE to SR (privileged)
+            if not self.supervisor:
+                self.exception(8)
+                return 34
+            src = self.decode_ea((opcode >> 3) & 7, opcode & 7, 2)
+            self._write_sr(self.read_op(src))
+            return 12
+        if (opcode & 0xFFC0) == 0x4AC0:  # TAS
+            dst = self.decode_ea((opcode >> 3) & 7, opcode & 7, 1)
+            val = self.read_op(dst)
+            self.set_nz(val, 1)
+            self.sr &= ~(V_BIT | C_BIT)
+            self.write_op(dst, val | 0x80)
+            return 4
+        if opcode == 0x4AFC:  # ILLEGAL
+            self.exception(4)
+            return 34
+        if opcode == 0x4E76:  # TRAPV
+            if self._v():
+                self.exception(7)
+                return 34
+            return 4
+        if opcode == 0x4E70:  # RESET (privileged no-op)
+            if not self.supervisor:
+                self.exception(8)
+                return 34
+            return 132
+        if (opcode & 0xFFF0) == 0x4E60:  # MOVE USP (privileged)
+            if not self.supervisor:
+                self.exception(8)
+                return 34
+            an = opcode & 7
+            if opcode & 0x0008:
+                self.a[an] = self.usp
+            else:
+                self.usp = self.a[an]
+            return 4
+        if (opcode & 0xF1C0) == 0x4180:  # CHK.W
+            dn = (opcode >> 9) & 7
+            src = self.decode_ea((opcode >> 3) & 7, opcode & 7, 2)
+            bound = sign_extend(self.read_op(src), 2)
+            value = sign_extend(self.d[dn] & 0xFFFF, 2)
+            if value < 0 or value > bound:
+                self._set_bit(N_BIT, value < 0)
+                self.exception(6)
+                return 40
+            return 10
 
         op6 = (opcode >> 8) & 0xF
         sizef = (opcode >> 6) & 3
@@ -747,11 +810,53 @@ class M68K:
         self.sr &= ~(V_BIT | C_BIT)
         return 140
 
+    def _addx_subx(self, opcode, size, add, mem):
+        m = MASK[size]
+        rx = (opcode >> 9) & 7
+        ry = opcode & 7
+        x = self._x()
+        if mem:
+            dec = 2 if (size == 1 and ry == 7) else size
+            self.a[ry] = (self.a[ry] - dec) & 0xFFFFFFFF
+            src = self.bus.read(self.a[ry], size)
+            dec = 2 if (size == 1 and rx == 7) else size
+            self.a[rx] = (self.a[rx] - dec) & 0xFFFFFFFF
+            dst = self.bus.read(self.a[rx], size)
+        else:
+            src = self.d[ry] & m
+            dst = self.d[rx] & m
+        if add:
+            total = (dst & m) + (src & m) + x
+            res = total & m
+            carry = total > m
+            sm, dm, rm = bool(src & MSB[size]), bool(dst & MSB[size]), bool(res & MSB[size])
+            overflow = (sm and dm and not rm) or (not sm and not dm and rm)
+        else:
+            total = (dst & m) - (src & m) - x
+            res = total & m
+            carry = total < 0
+            sm, dm, rm = bool(src & MSB[size]), bool(dst & MSB[size]), bool(res & MSB[size])
+            overflow = (not sm and dm and not rm) or (sm and not dm and rm)
+        self._set_bit(N_BIT, bool(res & MSB[size]))
+        if res != 0:                       # Z cleared if nonzero, else unchanged
+            self._set_bit(Z_BIT, False)
+        self._set_bit(V_BIT, overflow)
+        self._set_bit(C_BIT, carry)
+        self._set_bit(X_BIT, carry)
+        if mem:
+            self.bus.write(self.a[rx], size, res)
+        else:
+            self.write_dn(rx, size, res)
+        return 8
+
     def _line9(self, opcode):  # SUB / SUBA / SUBX
         op_mode = (opcode >> 6) & 7
         dn = (opcode >> 9) & 7
         mode = (opcode >> 3) & 7
         reg = opcode & 7
+        if op_mode in (4, 5, 6) and mode in (0, 1):  # SUBX
+            size = {0: 1, 1: 2, 2: 4}[op_mode & 3]
+            return self._addx_subx(opcode, size, add=False, mem=(mode == 1))
         if op_mode in (3, 7):  # SUBA
             size = 2 if op_mode == 3 else 4
             ea = self.decode_ea(mode, reg, size)
@@ -858,6 +963,9 @@ class M68K:
         dn = (opcode >> 9) & 7
         mode = (opcode >> 3) & 7
         reg = opcode & 7
+        if op_mode in (4, 5, 6) and mode in (0, 1):  # ADDX
+            size = {0: 1, 1: 2, 2: 4}[op_mode & 3]
+            return self._addx_subx(opcode, size, add=True, mem=(mode == 1))
         if op_mode in (3, 7):  # ADDA
             size = 2 if op_mode == 3 else 4
             ea = self.decode_ea(mode, reg, size)

@@ -20,27 +20,29 @@ class Genesis:
         self.vdp = VDP()
         self.io = IO()
         self.bus = Bus(rom.data, self.vdp, self.io)
+        self.vdp.bus = self.bus
         self.cpu = M68K(self.bus)
         self.cpu.illegal_as_nop = illegal_as_nop
         self.cpu.reset()
         self.frame_count = 0
 
     def run_line(self, line: int):
+        self.vdp.current_line = line
         target = self.cpu.cycles + CYCLES_PER_LINE
         while self.cpu.cycles < target:
-            try:
-                self.cpu.step()
-            except IllegalInstruction:
-                # With illegal_as_nop disabled this propagates; otherwise the
-                # CPU swallows it. Re-raising here would stop the machine.
-                raise
+            self.cpu.step()
 
     def run_frame(self):
         self.vdp.end_vblank()
+        hint_counter = self.vdp.regs[10]
         for line in range(VISIBLE_LINES):
             self.run_line(line)
-            if (self.vdp.regs[0] & 0x10):  # HINT enable (level 4)
-                self.cpu.raise_irq(4)
+            if self.vdp.regs[0] & 0x10:        # HINT enabled (level 4)
+                if hint_counter == 0:
+                    hint_counter = self.vdp.regs[10]
+                    self.cpu.raise_irq(4)
+                else:
+                    hint_counter -= 1
         # Enter vblank.
         self.vdp.start_vblank()
         if self.vdp.vint_pending:

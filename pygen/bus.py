@@ -50,6 +50,8 @@ class Bus:
             return self.z80_ram[addr & 0x1FFF]
         if 0xA10000 <= addr <= 0xA1001F:
             return self.io.read(addr) if self.io else 0xFF
+        if 0xA11100 <= addr <= 0xA111FF:    # Z80 bus request -> always granted
+            return 0x00
         if 0xC00000 <= addr <= 0xC0001F:
             word = self.vdp.read_port(addr & 0x1E) if self.vdp else 0
             return (word >> 8) & 0xFF if (addr & 1) == 0 else word & 0xFF
@@ -84,6 +86,8 @@ class Bus:
             return self.vdp.read_port(addr & 0x1E) if self.vdp else 0
         if 0xA10000 <= addr <= 0xA1001F:
             return self.io.read(addr) if self.io else 0xFFFF
+        if 0xA11100 <= addr <= 0xA111FF:    # Z80 bus request -> always granted
+            return 0x0000
         return (self.read8(addr) << 8) | self.read8(addr + 1)
 
     def write16(self, addr: int, value: int):

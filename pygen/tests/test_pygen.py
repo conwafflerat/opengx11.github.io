@@ -125,6 +125,39 @@ def test_mulu_divu():
     assert cpu.d[0] == 42
 
 
+def test_move_to_from_sr():
+    # MOVE #$2000,SR ; MOVE SR,D0
+    cpu = _cpu_with([0x46FC, 0x2000, 0x40C0])
+    cpu.step()
+    assert cpu.sr == 0x2000
+    cpu.step()
+    assert (cpu.d[0] & 0xFFFF) == 0x2000
+
+
+def test_addx_with_extend():
+    # Set X via an overflowing ADDQ, then ADDX.L D1,D0 -> 1 + 1 + X(1) = 3
+    cpu = _cpu_with([
+        0x203C, 0x0000, 0x0001,   # MOVE.L #1,D0
+        0x223C, 0x0000, 0x0001,   # MOVE.L #1,D1
+        0x243C, 0xFFFF, 0xFFFF,   # MOVE.L #-1,D2
+        0x5282,                   # ADDQ.L #1,D2  -> X = 1
+        0xD181,                   # ADDX.L D1,D0
+    ])
+    for _ in range(5):
+        cpu.step()
+    assert cpu.d[0] == 3
+    assert cpu._x() == 0          # 1+1+1 = 3 produces no carry out
+
+
+def test_tas():
+    # MOVEQ #0,D0 ; TAS D0 -> Z set, byte becomes 0x80
+    cpu = _cpu_with([0x7000, 0x4AC0])
+    cpu.step()
+    cpu.step()
+    assert (cpu.d[0] & 0xFF) == 0x80
+    assert cpu._z() == 1
+
+
 # --------------------------------------------------------------------- ROM
 def _synthetic_rom():
     data = bytearray(0x400)
@@ -202,6 +235,25 @@ def test_cpu_writes_vdp_through_bus():
     genesis = Genesis(Rom(bytes(data)))
     genesis.run_frame()
     assert genesis.vdp.regs[15] == 0x02
+
+
+def test_homebrew_dma_boot_and_render():
+    # The homebrew ROM sets up the VDP and loads palette/tiles/tilemap via DMA
+    # through the CPU, then renders -- exercising the full boot path.
+    from pygen.homebrew import build_rom
+    from pygen.emulator import Genesis
+
+    genesis = Genesis(Rom(build_rom()))
+    genesis.run_frame()
+    # DMA actually populated CRAM and VRAM.
+    assert any(c != 0 for c in genesis.vdp.cram)
+    assert any(b != 0 for b in genesis.vdp.vram)
+    assert not genesis.cpu.illegal_log, genesis.cpu.illegal_log
+    width, height, rgb = genesis.render()
+    bg = (rgb[0], rgb[1], rgb[2])
+    non_bg = sum(1 for i in range(0, len(rgb), 3)
+                 if (rgb[i], rgb[i + 1], rgb[i + 2]) != bg)
+    assert non_bg > 1000
 
 
 def _run_all():
