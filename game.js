@@ -38,6 +38,69 @@ window.addEventListener('keyup', e => {
   if (k) keys[k] = false;
 });
 
+// ---------------- touch controls (iPad / phones) ----------------
+const TOUCH = ('ontouchstart' in window) ||
+  (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+const touchBtns = {
+  left:  { x: 10,  y: 172, w: 42, h: 44 },
+  right: { x: 60,  y: 172, w: 42, h: 44 },
+  jump:  { x: 264, y: 168, w: 48, h: 48 },
+};
+let touchState = { left: false, right: false, jump: false };
+function handleTouches(e, isStart) {
+  e.preventDefault();
+  initAudio();
+  if (AC && AC.state === 'suspended') AC.resume();
+  const r = cv.getBoundingClientRect();
+  const cur = { left: false, right: false, jump: false };
+  let anyOutside = false;
+  for (const t of e.touches) {
+    const x = (t.clientX - r.left) / r.width * W;
+    const y = (t.clientY - r.top) / r.height * H;
+    let hit = false;
+    for (const k in touchBtns) {
+      const b = touchBtns[k];
+      if (x >= b.x - 8 && x <= b.x + b.w + 8 && y >= b.y - 8 && y <= b.y + b.h + 8) {
+        cur[k] = true; hit = true;
+      }
+    }
+    if (!hit) anyOutside = true;
+  }
+  if (cur.jump && !touchState.jump) pressed.jump = true;
+  if (isStart && anyOutside && state !== 'play') pressed.start = true;
+  keys.left = cur.left; keys.right = cur.right; keys.jump = cur.jump;
+  touchState = cur;
+}
+if (TOUCH && cv.addEventListener) {
+  cv.addEventListener('touchstart',  e => handleTouches(e, true),  { passive: false });
+  cv.addEventListener('touchmove',   e => handleTouches(e, false), { passive: false });
+  cv.addEventListener('touchend',    e => handleTouches(e, false), { passive: false });
+  cv.addEventListener('touchcancel', e => handleTouches(e, false), { passive: false });
+}
+function drawTouchUI() {
+  if (!TOUCH || state === 'title' || state === 'card') return;
+  const btn = (b, on, draw) => {
+    ctx.globalAlpha = on ? 0.6 : 0.3;
+    ctx.fillStyle = '#202838';
+    ctx.beginPath();
+    ctx.arc(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#d8dce8'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#d8dce8';
+    draw(b.x + b.w / 2, b.y + b.h / 2);
+    ctx.globalAlpha = 1;
+  };
+  btn(touchBtns.left, touchState.left, (cx, cy) => {
+    ctx.beginPath(); ctx.moveTo(cx - 7, cy); ctx.lineTo(cx + 5, cy - 8); ctx.lineTo(cx + 5, cy + 8); ctx.fill();
+  });
+  btn(touchBtns.right, touchState.right, (cx, cy) => {
+    ctx.beginPath(); ctx.moveTo(cx + 7, cy); ctx.lineTo(cx - 5, cy - 8); ctx.lineTo(cx - 5, cy + 8); ctx.fill();
+  });
+  btn(touchBtns.jump, touchState.jump, (cx, cy) => {
+    drawTextC(ctx, 'JUMP', cx, cy - 2, '#d8dce8', 1);
+  });
+}
+
 // ---------------- audio ----------------
 let AC = null, masterGain = null, muted = false;
 function initAudio() {
@@ -1343,8 +1406,9 @@ function drawTitle() {
   drawTextC(ctx, '16-BIT TAIL EDITION', 160, 106, '#9aa8bc', 1);
   // running rat
   ctx.drawImage(ratRun[Math.floor(frame / 5) % 4], 148, 162);
-  if (frame & 32) drawTextC(ctx, 'PRESS ENTER', 160, 136, '#fff', 2);
-  drawTextC(ctx, 'ARROWS/WASD MOVE . Z/SPACE JUMP . M MUTE', 160, 206, '#b0b0c8', 1);
+  if (frame & 32) drawTextC(ctx, TOUCH ? 'TAP TO START' : 'PRESS ENTER', 160, 136, '#fff', 2);
+  drawTextC(ctx, TOUCH ? 'ON-SCREEN BUTTONS TO MOVE AND JUMP'
+                       : 'ARROWS/WASD MOVE . Z/SPACE JUMP . M MUTE', 160, 206, '#b0b0c8', 1);
 }
 function drawCard() {
   // genesis-style level card: sliding color bands
@@ -1396,7 +1460,8 @@ function drawResults() {
   }
   if (stateT > 90) {
     drawTextC(ctx, 'SCORE ' + score, 160, 138, '#f8d838', 1);
-    if (stateT & 32) drawTextC(ctx, levelIdx === 0 ? 'PRESS ENTER FOR BONUS STAGE' : 'PRESS ENTER', 160, 152, '#fff', 1);
+    const go = TOUCH ? 'TAP' : 'PRESS ENTER';
+    if (stateT & 32) drawTextC(ctx, levelIdx === 0 ? go + ' FOR BONUS STAGE' : go, 160, 152, '#fff', 1);
   }
 }
 function drawEnd() {
@@ -1408,7 +1473,7 @@ function drawEnd() {
   drawTextC(ctx, 'CHEESE COLLECTED ' + totalCheese, 160, 126, '#fff', 1);
   drawTextC(ctx, 'BONUS STAGE CHEESE ' + bonusResult, 160, 138, '#fff', 1);
   drawTextC(ctx, 'THANKS FOR PLAYING', 160, 160, '#f08caa', 1);
-  if (stateT > 120 && (frame & 32)) drawTextC(ctx, 'PRESS ENTER', 160, 190, '#fff', 1);
+  if (stateT > 120 && (frame & 32)) drawTextC(ctx, TOUCH ? 'TAP TO RESTART' : 'PRESS ENTER', 160, 190, '#fff', 1);
 }
 
 function draw() {
@@ -1418,6 +1483,7 @@ function draw() {
   else if (state === 'results') drawResults();
   else if (state === 'bonus') drawBonus();
   else if (state === 'end') drawEnd();
+  drawTouchUI();
   if (muted) drawText(ctx, 'MUTE', 290, 214, '#888', 1);
 }
 

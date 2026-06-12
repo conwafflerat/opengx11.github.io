@@ -3,15 +3,19 @@
 <head>
 <meta charset="utf-8">
 <title>Rusty the Rat</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <style>
-  html,body{margin:0;height:100%;background:#0c0c14;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  html,body{margin:0;height:100%;background:#0c0c14;display:flex;align-items:center;justify-content:center;overflow:hidden;
+    touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   canvas{
     image-rendering:pixelated;
     image-rendering:crisp-edges;
     width:min(100vw, calc(100vh * 320 / 224));
     aspect-ratio:320/224;
     background:#000;
+    touch-action:none;
   }
 </style>
 </head>
